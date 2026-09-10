@@ -5,6 +5,8 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs, unquote
 from datetime import datetime
+from demo import make_demo, without_demo
+
 
 BASE = Path(__file__).resolve().parent
 DATA = Path(os.environ.get('RESEARCH_DESK_DATA', BASE / 'data'))
@@ -140,6 +142,23 @@ def write_state(data, restore=False):
         tmp.replace(path)
         return result
 
+def initialize_demo():
+    with LOCK:
+        if not (DATA/'workspace.json').exists():
+            write_state(make_demo(DATA/'demo-files'))
+
+def demo_action(body):
+    with LOCK:
+        current=read_state()
+        if body.get('revision') != current['revision']: raise RuntimeError('记录已更新，请刷新后再试')
+        if body.get('action') == 'clear':
+            return write_state(without_demo(current))
+        if body.get('action') == 'load':
+            if any(current[k] for k in COLLECTIONS) or current.get('affairsFolders'): raise ValueError('仅空白工作台可以载入示例，现有记录不会覆盖')
+            example=make_demo(DATA/'demo-files');example['revision']=current['revision']
+            return write_state(example)
+        raise ValueError('无效的示例操作')
+
 def linked_path(collection, record_id, relative=''):
     if collection not in ('projects','students','affairs'): raise ValueError('无效的文件关联')
     state = read_state()
@@ -201,6 +220,7 @@ class Handler(BaseHTTPRequestHandler):
             n=int(self.headers.get('Content-Length','0'))
             if not 0 < n <= 10_000_000: raise ValueError('请求大小超出限制')
             body=json.loads(self.rfile.read(n))
+            if self.path == '/api/demo': return self.output(demo_action(body))
             if self.path == '/api/state': return self.output(write_state(body))
             if self.path == '/api/restore': return self.output(write_state(body,restore=True))
             if self.path == '/api/check-folder':
@@ -228,5 +248,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(); parser.add_argument('--port',type=int,default=4318); args=parser.parse_args()
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
+    initialize_demo()
     print(f'研间已启动：http://127.0.0.1:{args.port}',flush=True)
     server.serve_forever()

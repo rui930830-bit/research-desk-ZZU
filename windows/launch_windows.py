@@ -30,6 +30,7 @@ def main():
     try:
         if not (server.BASE/'dist/client/index.html').exists():
             raise RuntimeError('缺少网页文件，请先完整解压整个分享包。')
+        server.initialize_demo()
         server.read_state()  # Fail without replacing existing corrupt data.
         print('研间已启动：'+URL, flush=True)
         print('请保留此窗口，可以最小化；关闭窗口即退出研间。', flush=True)

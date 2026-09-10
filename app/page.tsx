@@ -257,6 +257,38 @@ export default function Home() {
     chain.current = job.catch(() => {});
     return job;
   }, []);
+  const hasDemo = [
+    ...data.tasks,
+    ...data.projects,
+    ...data.students,
+    ...data.meetings,
+    ...data.collaborators,
+  ].some((x) => x.demo === true);
+  async function manageDemo(action: 'load' | 'clear') {
+    if (
+      action === 'clear' &&
+      !window.confirm(
+        '清除全部虚拟示例记录（包括你对示例的修改）？自己新建的记录会保留，关联到示例的关系会解除。操作前自动备份，示例文件不会删除。',
+      )
+    )
+      return;
+    const job = chain.current.then(async () => {
+      setStatus('正在保存…');
+      const saved = await api('demo', {
+        action,
+        revision: stateRef.current.revision,
+      });
+      stateRef.current = saved;
+      setData(saved);
+      setStatus('已保存到本地');
+      setSelected('');
+    });
+    chain.current = job.catch((e) => {
+      setError(e.message);
+      setStatus('操作未完成');
+    });
+    await chain.current;
+  }
   const dragging = useRef<{
     collection: 'projects' | 'students';
     id: string;
@@ -733,6 +765,19 @@ export default function Home() {
             />
           ) : (
             <>
+              {hasDemo && (
+                <div className="demo-banner">
+                  <strong>正在浏览虚拟示例</strong>
+                  <span>所有“【示例】”记录均为教学虚构，可编辑体验。</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => go('settings')}
+                  >
+                    管理示例
+                  </Button>
+                </div>
+              )}
               {page === 'home' && (
                 <>
                   <section className="cover">
@@ -1575,6 +1620,22 @@ export default function Home() {
                       <h1>设置与备份</h1>
                     </div>
                   </div>
+                  <section className="panel">
+                    <h2>学习示例</h2>
+                    <p className="settings-copy">
+                      新工作台首次启动自动载入虚拟示例，覆盖任务、科研项目、学生指导、组会、合作者、事务和文件浏览。清除后不会自动重新出现。自己新建的记录保留，修改过的示例仍属于示例。
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        void manageDemo(hasDemo ? 'clear' : 'load')
+                      }
+                    >
+                      {hasDemo
+                        ? '清除示例，开始正式使用'
+                        : '载入虚拟示例（仅限空白工作台）'}
+                    </Button>
+                  </section>
                   <section className="panel">
                     <h2>数据备份</h2>
                     <p className="settings-copy">
