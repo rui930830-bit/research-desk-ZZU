@@ -1,0 +1,10 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { progress, stageName, nextMeeting } from '../lib/desk.ts';
+test('weighted phases calculate independently of task counts',()=>{const p={id:'x',title:'研究',stages:[{title:'设计',weight:1,done:true},{title:'分析',weight:3,done:false}]};assert.equal(progress(p),25);assert.equal(stageName(p),'分析');p.stages[1].done=true;assert.equal(progress(p),100);assert.equal(stageName(p),'已完成')});
+test('meeting recurrence handles month-end and leap-year',()=>{assert.equal(nextMeeting('2026-12-25','全日制'),'2027-01-08');assert.equal(nextMeeting('2026-12-31','MPA'),'2027-02-28');assert.equal(nextMeeting('2027-12-31','MPA'),'2028-02-29');assert.equal(nextMeeting('','MPA'),'')});
+import {dateDay,dayDate,ganttRange} from '../lib/gantt.ts';
+test('gantt uses calendar days across DST and retains one-day stages',()=>{assert.equal(dateDay('2026-03-09')-dateDay('2026-03-08'),1);assert.equal(dayDate(dateDay('2026-09-06')),'2026-09-06');const range=ganttRange([{id:'x',title:'完成',weight:1,done:true,start:'2026-09-06',end:'2026-09-06'}],'2026-10-01','2026-09-07');assert.equal(range.start,dateDay('2026-09-03'));assert.equal(range.end,dateDay('2026-10-05'))});
+test('undated historical stages do not invent planned dates',()=>{const s=[{id:'x',title:'设计',weight:1,done:true}];const original=structuredClone(s);const r=ganttRange(s,'','2026-09-06');assert.deepEqual(s,original);assert.ok(r.start<=dateDay('2026-09-06'));assert.ok(r.end>=dateDay('2026-10-01'))});
+import {stageEnd,finishStage} from '../lib/gantt.ts';
+test('ongoing stages extend with today and freeze upon completion',()=>{const s={id:'ongoing',title:'投稿',weight:1,done:false,start:'2026-08-01',end:'present'};assert.equal(stageEnd(s,'2026-09-06'),'2026-09-06');assert.equal(stageEnd(s,'2026-09-07'),'2026-09-07');assert.equal(ganttRange([s],'','2026-09-07').end,dateDay('2026-09-11'));const done=finishStage(s,true,'2026-09-07');assert.equal(done.end,'2026-09-07');assert.equal(stageEnd(done,'2026-09-08'),'2026-09-07');assert.equal(s.end,'present')});
