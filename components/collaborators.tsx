@@ -1,5 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { orderCollaborators, activeProjects } from '@/lib/collaborator-order';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -28,7 +29,11 @@ export function Collaborators({
   const [draft, setDraft] = useState<Item | null>(null),
     [busy, setBusy] = useState(false),
     [err, setErr] = useState(''),
-    [archived, setArchived] = useState(false);
+    [archived, setArchived] = useState(false),
+    [sortModes, setSortModes] = useState<Record<string,string>>({active:'project',potential:'project'});
+  useEffect(()=>{try{const value=JSON.parse(localStorage.getItem('desk-collaborator-sorts')||'{}');setSortModes({active:value.active==='title'?'title':'project',potential:value.potential==='title'?'title':'project'});}catch{}},[]);
+  function changeSort(group:string,value:string){const next={...sortModes,[group]:value};setSortModes(next);try{localStorage.setItem('desk-collaborator-sorts',JSON.stringify(next));}catch{}}
+
   const person = data.collaborators.find((x) => x.id === selected);
   const projects = (id: string) =>
     data.projects.filter((p) => p.collaboratorIds?.includes(id));
@@ -65,7 +70,7 @@ export function Collaborators({
           <div className="document-title">
             <div>
               <p className="eyebrow">
-                合作者档案{person.archived ? ' · 已归档' : ''}
+                {person.relationship==='potential'?'潜在合作者':'合作者'}档案{person.archived ? ' · 已归档' : ''}
               </p>
               <h1>{person.title}</h1>
             </div>
@@ -122,6 +127,7 @@ export function Collaborators({
               </p>
             )}
           </section>
+          <section className="panel"><h2>协助评阅记录</h2>{data.tasks.filter(t=>t.requesterId===person.id&&t.affairsType==='协助评阅').map(t=><p key={t.id}>{t.title} · {t.done?'已完成':'待办'}{t.deadline?' · '+t.deadline:''}</p>)}{!data.tasks.some(t=>t.requesterId===person.id&&t.affairsType==='协助评阅')&&<p>暂无协助评阅记录</p>}</section>
           <section className="panel">
             <div className="section-head">
               <h2>合作记录与备注</h2>
@@ -157,36 +163,23 @@ export function Collaborators({
               添加合作者
             </Button>
           </div>
-          <div className="collaborator-grid">
-            {data.collaborators
-              .filter((p) => !!p.archived === archived)
-              .map((p) => (
-                <button
-                  className="collaborator-card"
-                  key={p.id}
-                  onClick={() => select(p.id)}
-                >
-                  <div className="flex-between">
-                    <span className="person-avatar">{p.title.slice(0, 1)}</span>
-                    <ArrowUpRight size={18} />
-                  </div>
-                  <h2>{p.title}</h2>
-                  <p>
-                    <Building2 size={14} />
-                    {p.institution || '单位待补充'}
-                  </p>
-                  <p>{p.research || '研究方向待补充'}</p>
-                  <small>{projects(p.id).length} 个合作项目</small>
-                </button>
-              ))}
-          </div>
-          {!data.collaborators.some((p) => !!p.archived === archived) && (
-            <section className="panel empty-state">
-              {archived
-                ? '暂无归档档案'
-                : '添加合作者，集中记录研究方向、联系方式和合作项目。'}
-            </section>
-          )}
+          {(['active','potential'] as const).map(group=>{
+            const label=group==='active'?'合作者':'潜在合作者';
+            const people=orderCollaborators(data.collaborators.filter(p=>!!p.archived===archived&&(p.relationship==='potential'?'potential':'active')===group),data.projects,sortModes[group]);
+            return <section key={group} className="collaborator-section">
+              <div className="section-head"><h2>{label} <small>{people.length} 人</small></h2>
+                <label className="collaborator-sort">排序<select aria-label={label+'排序'} value={sortModes[group]} onChange={e=>changeSort(group,e.target.value)}><option value="project">按项目优先情况</option><option value="title">按职称</option></select></label>
+              </div>
+              <p className="settings-copy">{sortModes[group]==='title'?'正高级 → 副高级 → 中级 → 初级 → 其他或待补充；同级按姓名排序。':'置顶的进行中项目优先，其次其他进行中项目，再按截止日期由近到远；无进行中项目排在最后。'}</p>
+              <div className="collaborator-grid">{people.map(p=><button className="collaborator-card" key={p.id} onClick={()=>select(p.id)}>
+                <div className="flex-between"><span className="person-avatar">{p.title.slice(0,1)}</span><ArrowUpRight size={18}/></div>
+                <h2>{p.title}</h2><p>{p.position||'职称待补充'}</p>
+                <p><Building2 size={14}/>{p.institution||'单位待补充'}</p><p>{p.research||'研究方向待补充'}</p>
+                <small>{activeProjects(p,data.projects).length} 个进行中项目 · {projects(p.id).length} 个合作项目</small>
+              </button>)}</div>
+              {!people.length&&<div className="panel empty-state">暂无{archived?'已归档的':''}{label}</div>}
+            </section>;
+          })}
         </>
       )}
       <Dialog
@@ -220,6 +213,8 @@ export function Collaborators({
                 }
               }}
             >
+              <label className="field">合作关系<select value={draft.relationship||'active'} onChange={e=>setDraft({...draft,relationship:e.target.value})}><option value="active">合作者</option><option value="potential">潜在合作者</option></select></label>
+              <label className="field">职称排序级别<select value={draft.titleLevel||'auto'} onChange={e=>setDraft({...draft,titleLevel:e.target.value})}><option value="auto">根据职称自动识别</option><option value="1">正高级</option><option value="2">副高级</option><option value="3">中级</option><option value="4">初级</option><option value="5">其他 / 暂未确定</option></select></label>
               <div className="form-grid">
                 {[
                   ['title', '姓名'],

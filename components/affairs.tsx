@@ -81,7 +81,7 @@ export function Affairs({
         </Tabs>
       </div>
       <p className="settings-copy">
-        事务与日常任务共用同一条记录，安排到“今天”即可在首页看到。协助评阅的求助人独立记录，不加入合作者档案。
+        事务与日常任务共用同一条记录，安排到“今天”即可在首页看到。协助评阅的求助人会自动加入潜在合作者档案。
       </p>
       {kind !== '全部' && (
         <div className="affair-files">{renderFiles(kind)}</div>
@@ -111,7 +111,8 @@ export function Affairs({
                 </strong>
                 <small>
                   {t.affairsType} · {t.bucket}
-                  {t.requester ? ' · ' + t.requester : ''}
+                  {t.ownerName ? ' · 负责人：' + t.ownerName : ''}
+                  {t.requester ? ' · 发起方：' + t.requester : ''}
                 </small>
                 {t.affairsType === '期刊审稿' && (
                   <p>

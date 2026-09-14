@@ -13,6 +13,7 @@ export type Collection =
 export type State = {
   version: number;
   revision: number;
+  planImports?: {planId:string;title:string;importedAt:string;projects:Item[];tasks:Item[];undone?:boolean}[];
   affairsFolders?: Record<string, string>;
   tasks: Item[];
   projects: Item[];

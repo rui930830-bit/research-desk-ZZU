@@ -1,4 +1,8 @@
 'use client';
+import { QuickFollowup } from '@/components/quick-followup';
+import { dueReminders, validateTaskReminder } from '@/lib/task-reminders';
+import { linkCollaborators } from '@/lib/collaborator-links';
+import { WorkPlanImport } from '@/components/work-plan-import';
 import { completedWork } from '@/lib/completed-work';
 import { isOverdue, matchesTaskOrigin } from '@/lib/task-display';
 import { finishStage } from '@/lib/gantt';
@@ -199,6 +203,8 @@ function Due({
   );
 }
 export default function Home() {
+  const [quickStudent, setQuickStudent] = useState<string|null>(null);
+  const [unpinning, setUnpinning] = useState<string[]>([]);
   const [taskOrigin, setTaskOrigin] = useState('全部');
   const [calendarDay, setCalendarDay] = useState(today);
   const [showTodayDone, setShowTodayDone] = useState(false);
@@ -228,7 +234,9 @@ export default function Home() {
   };
   useEffect(() => {
     api('state')
-      .then((d) => {
+      .then(async (loaded) => {
+        const linked = linkCollaborators(loaded);
+        const d = JSON.stringify(linked) === JSON.stringify(loaded) ? loaded : await api('state', linked);
         setData(d);
         stateRef.current = d;
         setReady(true);
@@ -243,7 +251,7 @@ export default function Home() {
     const job = chain.current.then(async () => {
       setStatus('正在保存…');
       try {
-        const next = fn(structuredClone(stateRef.current));
+        const next = linkCollaborators(fn(structuredClone(stateRef.current)));
         const saved = await api('state', next);
         stateRef.current = saved;
         setData(saved);
@@ -575,6 +583,8 @@ export default function Home() {
           }
         >
           <span>{t.title}</span>
+          {(t.ownerName||t.requester)&&<small>{[t.ownerName?'负责人：'+t.ownerName:'',t.requester?'发起方：'+t.requester:''].filter(Boolean).join(' · ')}</small>}
+          {!t.done && ['近期','以后'].includes(t.bucket) && t.reminderEnabled && t.reminderDate && <small>提醒：{t.reminderDate}</small>}
           {t.isTemporary && (
             <small>
               <em className="temporary-badge">临时</em>
@@ -620,7 +630,7 @@ export default function Home() {
       >
         <div className="flex-between">
           <span className="eyebrow">{p.kind}</span>
-          {p.pinned && <Pin size={14} />}
+          {p.pinned && (page === 'home' ? <span aria-hidden style={{width:14}} /> : <Pin size={14} />)}
         </div>
         <h3>{p.title}</h3>
         <div className="flex-between">
@@ -641,6 +651,16 @@ export default function Home() {
         {...dropProps('projects', p.id)}
       >
         {card}
+        {page === 'home' && p.pinned && <button
+          type="button" className="project-unpin" title="取消置顶"
+          aria-label={'取消置顶：'+p.title} disabled={unpinning.includes(p.id)}
+          onClick={async e=>{
+            e.stopPropagation();
+            setUnpinning(ids=>[...ids,p.id]);
+            try { await patch('projects',p.id,{pinned:false});notify('已取消置顶，项目可在全部项目中查看'); }
+            catch { /* Shared save handler displays the error. */ }
+            finally { setUnpinning(ids=>ids.filter(id=>id!==p.id)); }
+          }}><Pin size={16}/></button>}
         {reorderHandle('projects', p.id, p.title, visible)}
       </div>
     ) : (
@@ -796,6 +816,7 @@ export default function Home() {
                   </section>
                   <div className="page-title">
                     <h2>今天的工作</h2>
+                    <WorkPlanImport data={data} mutate={mutate} />
                     <Button onClick={() => create('tasks')}>
                       <Plus />
                       添加任务
@@ -861,6 +882,10 @@ export default function Home() {
                       )}
                     </section>
                   )}
+                  {dueReminders(data.tasks,calendarDay).length>0 && <section className="panel" style={{marginBottom:24}}>
+                    <div className="section-head"><h2>任务提醒 <small>{dueReminders(data.tasks,calendarDay).length} 项</small></h2></div>
+                    {dueReminders(data.tasks,calendarDay).map(taskRow)}
+                  </section>}
                   <div className="dashboard-grid">
                     <section className="panel">
                       <div className="section-head">
@@ -960,22 +985,8 @@ export default function Home() {
                       )}
                     </section>
                     <section className="panel">
-                      <h2>
-                        指导与组会 <small>未来 7 天及待跟进</small>
-                      </h2>
-                      {follow.map((s) => (
-                        <button
-                          className="reminder"
-                          key={s.id}
-                          onClick={() => go('students', s.id)}
-                        >
-                          <span>
-                            {s.title}
-                            <small> · {s.kind}</small>
-                          </span>
-                          <Due date={s.followup} />
-                        </button>
-                      ))}
+                      <div className="section-head"><h2>指导与组会 <small>未来 7 天及待跟进</small></h2><Button size="sm" variant="outline" onClick={()=>setQuickStudent('')}>一键跟进</Button></div>
+                      {follow.map(s=><div key={s.id} className="flex-between" style={{gap:12}}><button className="reminder" style={{flex:1,minWidth:0}} onClick={()=>go('students',s.id)}><span>{s.title}<small> · {s.kind}</small></span><Due date={s.followup}/></button><Button size="sm" variant="outline" onClick={()=>setQuickStudent(s.id)}>跟进</Button></div>)}
                       {data.meetings
                         .filter(
                           (m) =>
@@ -1078,7 +1089,7 @@ export default function Home() {
                       onChange={setTaskOrigin}
                       options={[
                         { value: '全部', label: '全部任务' },
-                        { value: '计划', label: '计划任务（未标记临时）' },
+                        { value: '计划', label: '计划任务' },
                         { value: '临时', label: '临时任务' },
                       ]}
                     />
@@ -1618,6 +1629,7 @@ export default function Home() {
                     <div>
                       <p className="eyebrow">LOCAL WORKSPACE</p>
                       <h1>设置与备份</h1>
+                      <WorkPlanImport data={data} mutate={mutate} />
                     </div>
                   </div>
                   <section className="panel">
@@ -1750,6 +1762,7 @@ export default function Home() {
           )}
         </div>
       </SidebarInset>
+      {quickStudent!==null && <QuickFollowup data={data} studentId={quickStudent} mutate={mutate} close={()=>setQuickStudent(null)}/> }
       {modal && (
         <RecordForm
           modal={modal}
@@ -1942,6 +1955,7 @@ function RecordForm({
             }
             setBusy(true);
             try {
+              if(c==='tasks') validateTaskReminder(draft);
               await save({ ...draft, title: draft.title.trim() });
             } catch (e: any) {
               setErr(e.message);
@@ -1968,17 +1982,11 @@ function RecordForm({
                   options={[{ value: '', label: '普通任务' }, ...affairTypes]}
                 />
               </Field>
-              {!!draft.affairsType &&
-                field(
-                  'requester',
-                  draft.affairsType === '协助评阅'
-                    ? '求助人 / 单位（独立记录）'
-                    : draft.affairsType === '行政任务'
-                      ? '交办人 / 部门'
-                      : draft.affairsType === '期刊审稿'
-                        ? '联系编辑（选填）'
-                        : '相关人员 / 课程',
-                )}
+              <div className="form-grid">
+                <Field label="负责人"><Input list="task-people" placeholder="填写姓名或选择已有合作者" value={draft.ownerName||''} onChange={e=>set('ownerName',e.target.value)}/></Field>
+                <Field label={draft.affairsType==='协助评阅'?'任务发起方 / 求助人':draft.affairsType==='期刊审稿'?'任务发起方 / 联系编辑':'任务发起方 / 交办人或部门'}><Input list="task-people" placeholder="填写姓名、部门或选择已有合作者" value={draft.requester||''} onChange={e=>set('requester',e.target.value)}/></Field>
+                <datalist id="task-people">{data.collaborators.map(p=><option key={p.id} value={p.title}>{p.institution||''}</option>)}</datalist>
+              </div>
               {draft.affairsType === '期刊审稿' && (
                 <>
                   <Field label="期刊名称">
@@ -2020,6 +2028,10 @@ function RecordForm({
                 </Field>
                 {field('deadline', '截止日期', 'date')}
               </div>
+              {['近期','以后'].includes(draft.bucket) && <div className="field">
+                <label className="check-label"><Checkbox checked={!!draft.reminderEnabled} onCheckedChange={v=>set('reminderEnabled',!!v)}/>开启首页提醒</label>
+                {draft.reminderEnabled && <Field label="提醒日期"><Input type="date" required value={draft.reminderDate||''} onChange={e=>set('reminderDate',e.target.value)}/><small>从这一天起显示在首页，直到完成、关闭提醒或安排为今天做。</small></Field>}
+              </div>}
               <div className="form-grid">
                 <Field label="关联项目">
                   <Pick
@@ -2048,6 +2060,7 @@ function RecordForm({
                   />
                 </Field>
               </div>
+              <details open={draft.meetingId ? true : undefined}><summary>其他关联{draft.meetingId ? "（已关联组会）" : "（选填）"}</summary>
               <Field label="关联组会">
                 <Pick
                   value={draft.meetingId}
@@ -2060,13 +2073,13 @@ function RecordForm({
                     })),
                   ]}
                 />
-              </Field>
+              </Field></details>
               <label className="check-label">
                 <Checkbox
                   checked={!!draft.isTemporary}
                   onCheckedChange={(v) => set('isTemporary', !!v)}
                 />
-                临时插入（原计划之外）
+                临时插入
               </label>
               <label className="check-label">
                 <Checkbox
@@ -2138,10 +2151,11 @@ function RecordForm({
                     </label>
                   ))}
                   {!data.collaborators.length && (
-                    <small>先在侧栏“合作者”中建立档案，再在这里选择。</small>
+                    <small>可在下方直接填写新合作者，保存项目时自动建档。</small>
                   )}
                 </div>
               </div>
+              {field('newCollaboratorNames', '新增合作者姓名（多人用顿号或逗号分隔）')}
               {draft.collaborators &&
                 field('collaborators', '原合作人员文字（保留）')}
               <label className="check-label">

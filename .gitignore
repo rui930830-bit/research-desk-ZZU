@@ -50,3 +50,6 @@ runtime/
 *.zip
 *.log
 .venv/
+
+private-ai/
+backups-before-*/

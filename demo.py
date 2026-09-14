@@ -36,7 +36,7 @@ def make_demo(folder, day=None):
         ('汇总课程材料','近期',False,dict(affairsType='行政任务',requester='示例教学办公室')),
         ('评阅社区治理稿件','今天',False,dict(affairsType='期刊审稿',reviewJournal='示例公共事务评论（虚构）',manuscriptTitle='社区协作机制研究（虚构）',reviewNumber='DEMO-R01',requester='示例编辑')),
         ('准备研究方法课程','近期',False,dict(affairsType='学生工作')),
-        ('帮同事看申报书','近期',False,dict(affairsType='协助评阅',requester='示例求助人（非合作者）',assistanceType='项目',manuscriptTitle='基层服务创新课题（虚构）')),
+        ('帮同事看申报书','近期',False,dict(affairsType='协助评阅',requester='【示例】求助人（虚构）',assistanceType='项目',manuscriptTitle='基层服务创新课题（虚构）')),
     ]):
         fields=dict(bucket=bucket,done=done,deadline=d(-1 if i==6 else 2+i),projectId='',studentId='',meetingId='',isTemporary=False);fields.update(extra)
         tasks.append(record('t'+str(i),title,**fields))
@@ -47,7 +47,7 @@ def without_demo(data):
     removed={k:{r['id'] for r in result[k] if r.get('demo') is True} for k in COLLECTIONS}
     for k in COLLECTIONS: result[k]=[r for r in result[k] if r.get('demo') is not True]
     for t in result['tasks']:
-        for key,collection in [('projectId','projects'),('studentId','students'),('meetingId','meetings')]:
+        for key,collection in [('projectId','projects'),('studentId','students'),('meetingId','meetings'),('requesterId','collaborators'),('ownerId','collaborators'),('initiatorId','collaborators')]:
             if t.get(key) in removed[collection]: t[key]=''
     for p in result['projects']:
         for key,collection in [('studentIds','students'),('collaboratorIds','collaborators')]:
