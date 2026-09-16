@@ -6,6 +6,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs, unquote
 from datetime import datetime
 from demo import make_demo, without_demo
+import desk_assistant, assistant_transport
 
 
 BASE = Path(__file__).resolve().parent
@@ -190,8 +191,9 @@ class Handler(BaseHTTPRequestHandler):
             url = urlsplit(self.path)
             if url.path.startswith('/api/'):
                 self.guard()
+                if url.path == '/api/ai/config': return self.output(assistant_transport.public_config(DATA))
                 if url.path == '/api/state': return self.output(read_state())
-                if url.path == '/api/health': return self.output({'app':'research-desk','version':2})
+                if url.path == '/api/health': return self.output({'app':'research-desk','version':2,'assistant':1})
                 if url.path == '/api/files':
                     q = parse_qs(url.query); root,path = linked_path(q.get('collection',[''])[0],q.get('id',[''])[0],q.get('path',[''])[0])
                     if not path.is_dir(): raise ValueError('不是文件夹')
@@ -221,6 +223,20 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < n <= 10_000_000: raise ValueError('请求大小超出限制')
             body=json.loads(self.rfile.read(n))
             if self.path == '/api/demo': return self.output(demo_action(body))
+            if self.path == '/api/ai/config': return self.output(assistant_transport.save_config(DATA,body))
+            if self.path == '/api/ai/models': return self.output(assistant_transport.models(DATA))
+            if self.path == '/api/ai/test':
+                config=assistant_transport.read_config(DATA)
+                if not config.get('model'):raise ValueError('请先选择模型')
+                assistant_transport.request(DATA,'/chat/completions',{'model':config['model'],'messages':[{'role':'user','content':'Reply OK'}],'max_tokens':16,'stream':False})
+                return self.output({'ok':True})
+            if self.path == '/api/assistant/chat': return self.output(desk_assistant.chat(DATA,read_state(),body,validate))
+            if self.path == '/api/assistant/apply':
+                with LOCK:
+                    current=read_state();updated=desk_assistant.apply(current,body)
+                    return self.output(current if updated is current else write_state(updated))
+            if self.path == '/api/assistant/undo':
+                with LOCK:return self.output(write_state(desk_assistant.undo(read_state(),body)))
             if self.path == '/api/state': return self.output(write_state(body))
             if self.path == '/api/restore': return self.output(write_state(body,restore=True))
             if self.path == '/api/check-folder':

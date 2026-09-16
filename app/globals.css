@@ -1530,14 +1530,6 @@ body {
   margin-bottom: 22px;
 }
 
-.plan-file-picker { padding: 20px; border: 1px solid #cbd3d6; border-radius: 10px; background: #f6f8f8; display: grid; gap: 16px; }
-.plan-file-hint { margin: 6px 0 0; font-size: 14px; color: #536873; }
-.plan-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
-.plan-file-name { font-size: 14px; color: #425761; overflow-wrap: anywhere; min-width: 0; }
-.plan-downloads { display: flex; flex-wrap: wrap; gap: 12px; }
-.plan-downloads a { display: inline-flex; align-items: center; padding: 9px 14px; border: 1px solid #cbd3d6; border-radius: 8px; font-size: 14px; color: #244e64; background: #fff; text-decoration: none; }
-.plan-downloads a:hover { background: #edf2f4; }
-.plan-downloads a:focus-visible { outline: 2px solid #244e64; outline-offset: 3px; }
 
 .project-unpin { position:absolute; top:12px; right:44px; display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:4px; color:#254d65; cursor:pointer; }
 .project-unpin:hover { background:#e1e9ea; }
@@ -1547,6 +1539,18 @@ body {
 .collaborator-section { margin: 24px 0 36px; }
 .collaborator-sort { display:flex; align-items:center; gap:10px; font-size:14px; }
 .collaborator-sort select { border:1px solid #cbd3d6; border-radius:8px; padding:8px 12px; background:#fff; color:#244e64; }
+
+.home-assistant-dialog { max-width: 900px; max-height:90vh; overflow-y:auto; }
+.home-assistant-dialog textarea { width:100%; border:1px solid #cbd3d6; border-radius:8px; padding:12px; font:inherit; }
+.home-assistant-dialog .button-row { margin-top:12px; }
+.assistant-card { margin:12px 0; padding:16px; border:1px solid #d4dedf; border-radius:8px; }
+.assistant-card p { margin:5px 0; white-space:pre-wrap; }
+.assistant-message { margin:10px 0; padding:12px 16px; border-radius:8px; background:#f0f4f4; }
+.assistant-message.user { background:#e5eff2; }
+.assistant-message p { white-space:pre-wrap; margin-top:6px; }
+.home-assistant-dialog .ai-settings { margin-top:16px; }
+
+.task-delete { color: #a23b32; }
 
 .demo-banner {
   display: flex;

@@ -1,8 +1,8 @@
 'use client';
+import { HomeAssistant } from '@/components/home-assistant';
 import { QuickFollowup } from '@/components/quick-followup';
 import { dueReminders, validateTaskReminder } from '@/lib/task-reminders';
 import { linkCollaborators } from '@/lib/collaborator-links';
-import { WorkPlanImport } from '@/components/work-plan-import';
 import { completedWork } from '@/lib/completed-work';
 import { isOverdue, matchesTaskOrigin } from '@/lib/task-display';
 import { finishStage } from '@/lib/gantt';
@@ -203,6 +203,9 @@ function Due({
   );
 }
 export default function Home() {
+  const [deletingTasks, setDeletingTasks] = useState<string[]>([]);
+  const taskDeleteLock = useRef(new Set<string>());
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [quickStudent, setQuickStudent] = useState<string|null>(null);
   const [unpinning, setUnpinning] = useState<string[]>([]);
   const [taskOrigin, setTaskOrigin] = useState('全部');
@@ -265,6 +268,28 @@ export default function Home() {
     chain.current = job.catch(() => {});
     return job;
   }, []);
+  async function deleteTask(task: Item) {
+    if (taskDeleteLock.current.has(task.id)) return;
+    if (!window.confirm(`删除任务“${task.title}”？\n这项任务会从首页、日常任务、事务管理和关联任务中移除，关联的项目、学生和组会仍会保留。`)) return;
+    taskDeleteLock.current.add(task.id);
+    setDeletingTasks(ids => [...ids, task.id]);
+    try {
+      await mutate(current => ({...current, tasks: current.tasks.filter(t => t.id !== task.id)}));
+      setModal(current => current?.collection === 'tasks' && current.item.id === task.id ? null : current);
+      notify('任务已删除');
+    } finally {
+      taskDeleteLock.current.delete(task.id);
+      setDeletingTasks(ids => ids.filter(id => id !== task.id));
+    }
+  }
+  async function assistantCommit(path:string,body:any){
+    const job=chain.current.then(async()=>{
+      setStatus('正在保存…');
+      try{const saved=await api(path,{...body,revision:stateRef.current.revision});stateRef.current=saved;setData(saved);setStatus('已保存到本地');}
+      catch(e){setStatus('保存未完成');throw e;}
+    });
+    chain.current=job.catch(()=>{});return job;
+  }
   const hasDemo = [
     ...data.tasks,
     ...data.projects,
@@ -607,6 +632,11 @@ export default function Home() {
           </small>
         </button>
         <Due date={t.deadline} completed={!!t.done} />
+        <Button type="button" size="sm" variant="ghost" className="task-delete"
+          aria-label={'删除任务：'+t.title} disabled={deletingTasks.includes(t.id)}
+          onClick={() => { void deleteTask(t).catch(() => {}); }}>
+          {deletingTasks.includes(t.id) ? '删除中…' : '删除'}
+        </Button>
         {t.bucket !== '今天' && !t.done && (
           <Button
             size="sm"
@@ -815,8 +845,7 @@ export default function Home() {
                     <span className="art-credit">葛饰北斋 · 神奈川冲浪里</span>
                   </section>
                   <div className="page-title">
-                    <h2>今天的工作</h2>
-                    <WorkPlanImport data={data} mutate={mutate} />
+                    <h2>今天的工作</h2><Button variant="outline" onClick={()=>setAssistantOpen(true)}>AI 小助手</Button>
                     <Button onClick={() => create('tasks')}>
                       <Plus />
                       添加任务
@@ -1629,8 +1658,7 @@ export default function Home() {
                     <div>
                       <p className="eyebrow">LOCAL WORKSPACE</p>
                       <h1>设置与备份</h1>
-                      <WorkPlanImport data={data} mutate={mutate} />
-                    </div>
+                      </div>
                   </div>
                   <section className="panel">
                     <h2>学习示例</h2>
@@ -1762,11 +1790,13 @@ export default function Home() {
           )}
         </div>
       </SidebarInset>
+      {assistantOpen && <HomeAssistant close={()=>setAssistantOpen(false)} commit={assistantCommit} batches={(data as any).assistantBatches||[]}/>}
       {quickStudent!==null && <QuickFollowup data={data} studentId={quickStudent} mutate={mutate} close={()=>setQuickStudent(null)}/> }
       {modal && (
         <RecordForm
           modal={modal}
           data={data}
+          remove={deleteTask}
           close={() => setModal(null)}
           save={async (item) => {
             await put(modal.collection, item);
@@ -1904,11 +1934,13 @@ function RecordForm({
   modal,
   data,
   close,
+  remove,
   save,
 }: {
   modal: { collection: Collection; item: Item };
   data: State;
   close: () => void;
+  remove: (item: Item) => Promise<void>;
   save: (i: Item) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Item>(structuredClone(modal.item)),
@@ -2398,6 +2430,15 @@ function RecordForm({
             </p>
           )}
           <div className="form-footer">
+            {c === 'tasks' && data.tasks.some(t => t.id === draft.id) && (
+              <Button type="button" variant="outline" className="task-delete" style={{marginRight:'auto'}} disabled={busy}
+                onClick={async () => {
+                  setErr(''); setBusy(true);
+                  try { await remove(modal.item); }
+                  catch (e: any) { setErr(e.message); }
+                  finally { setBusy(false); }
+                }}>删除任务</Button>
+            )}
             <Button
               type="button"
               variant="outline"
