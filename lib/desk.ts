@@ -15,6 +15,7 @@ export type State = {
   revision: number;
   planImports?: {planId:string;title:string;importedAt:string;projects:Item[];tasks:Item[];undone?:boolean}[];
   affairsFolders?: Record<string, string>;
+  affairProjects?: Item[];
   tasks: Item[];
   projects: Item[];
   students: Item[];

@@ -1,3 +1,4 @@
+import { classificationOf } from './work-classification.ts';
 import type { Item, State } from './desk';
 
 // References to a student/meeting do not mean a task is the same activity.
@@ -9,6 +10,7 @@ export function completedWork(data: State): Item[] {
       workKey: `task:${t.id}`,
       source: 'tasks',
       sourceId: t.id,
+      ...classificationOf(t),
     }));
   const guidance = data.students.flatMap((student) =>
     (student.guidance || []).map((note: Item) => ({
@@ -20,7 +22,8 @@ export function completedWork(data: State): Item[] {
       done: true,
       source: 'students',
       sourceId: student.id,
-      workType: '学生指导',
+      ...classificationOf(note, 'students'),
+      actualMinutes: note.actualMinutes,
     })),
   );
   const meetings = data.meetings
@@ -33,7 +36,8 @@ export function completedWork(data: State): Item[] {
       done: true,
       source: 'meetings',
       sourceId: m.id,
-      workType: '组会',
+      ...classificationOf(m, 'meetings'),
+      actualMinutes: m.actualMinutes,
     }));
   return [...tasks, ...guidance, ...meetings].sort((a, b) =>
     (b.completedOn || '').localeCompare(a.completedOn || ''),

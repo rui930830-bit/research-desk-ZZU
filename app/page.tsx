@@ -1,13 +1,18 @@
 'use client';
+import { WorkSummary } from '@/components/work-summary';
+import { DurationField } from '@/components/duration-field';
+import { applyClassification, classificationOf, classificationLabel } from '@/lib/work-classification';
+import { WorkClassificationFields } from '@/components/work-classification-fields';
 import { HomeAssistant } from '@/components/home-assistant';
+import { pendingFollowup, latestGuidance, defaultNextFollowup, guidanceSnapshot, guidanceUpdate } from '@/lib/student-followup';
 import { QuickFollowup } from '@/components/quick-followup';
 import { dueReminders, validateTaskReminder } from '@/lib/task-reminders';
-import { linkCollaborators } from '@/lib/collaborator-links';
+import { linkCollaborators, removeCollaborator } from '@/lib/collaborator-links';
 import { completedWork } from '@/lib/completed-work';
 import { isOverdue, matchesTaskOrigin } from '@/lib/task-display';
 import { finishStage } from '@/lib/gantt';
 import { PaperJournals } from '@/components/paper-journals';
-import { Affairs, affairTypes } from '@/components/affairs';
+import { Affairs } from '@/components/affairs';
 import { reorderVisible } from '@/lib/reorder';
 import { ProjectGantt } from '@/components/project-gantt';
 import { Collaborators } from '@/components/collaborators';
@@ -113,6 +118,7 @@ import {
 const labels: Record<string, string> = {
   home: '总览',
   tasks: '日常任务',
+  summary: '工作总结',
   affairs: '事务管理',
   projects: '科研项目',
   students: '学生管理',
@@ -123,6 +129,7 @@ const labels: Record<string, string> = {
 const nav = [
   [LayoutDashboard, 'home'],
   [CheckSquare, 'tasks'],
+  [Clock3, 'summary'],
   [ClipboardList, 'affairs'],
   [BookOpen, 'projects'],
   [GraduationCap, 'students'],
@@ -187,9 +194,11 @@ function Blank({
 function Due({
   date,
   completed = false,
+  emptyLabel = '未设日期',
 }: {
   date: string;
   completed?: boolean;
+  emptyLabel?: string;
 }) {
   const overdue = isOverdue(date, completed, today());
   return date ? (
@@ -199,7 +208,7 @@ function Due({
       {overdue ? ' · 已逾期' : ''}
     </span>
   ) : (
-    <small>未设日期</small>
+    <small>{emptyLabel}</small>
   );
 }
 export default function Home() {
@@ -553,8 +562,8 @@ export default function Home() {
     .filter((x) => x.due <= week)
     .sort((a, b) => a.due.localeCompare(b.due));
   const follow = students
-    .filter((s) => s.followup && s.followup <= week)
-    .sort((a, b) => a.followup.localeCompare(b.followup));
+    .filter((s) => pendingFollowup(s, calendarDay) && pendingFollowup(s, calendarDay) <= week)
+    .sort((a, b) => pendingFollowup(a, calendarDay).localeCompare(pendingFollowup(b, calendarDay)));
   const item = ['projects', 'students', 'meetings'].includes(page)
     ? data[page as Collection].find((x) => x.id === selected)
     : null;
@@ -570,7 +579,7 @@ export default function Home() {
         <button className="task-text" onClick={() => go(w.source, w.sourceId)}>
           <span>{w.title}</span>
           <small>
-            {w.workType}
+            {classificationLabel(w, w.source)}
             {w.summary
               ? ' · ' + w.summary.replace(/[#*`\n]/g, ' ').slice(0, 90)
               : ''}
@@ -615,12 +624,7 @@ export default function Home() {
               <em className="temporary-badge">临时</em>
             </small>
           )}
-          {t.affairsType && (
-            <small>
-              {t.affairsType}
-              {t.reviewJournal ? ' · ' + t.reviewJournal : ''}
-            </small>
-          )}
+          <small>{classificationLabel(t)}{classificationOf(t).workType === '期刊审稿' && t.reviewJournal ? ' · ' + t.reviewJournal : ''}</small>
           <small>
             {[
               data.projects.find((p) => p.id === t.projectId)?.title,
@@ -842,7 +846,6 @@ export default function Home() {
                       <h1>今日研间</h1>
                       <p>日常 · 研究 · 指导</p>
                     </div>
-                    <span className="art-credit">葛饰北斋 · 神奈川冲浪里</span>
                   </section>
                   <div className="page-title">
                     <h2>今天的工作</h2><Button variant="outline" onClick={()=>setAssistantOpen(true)}>AI 小助手</Button>
@@ -890,6 +893,7 @@ export default function Home() {
                     <section className="panel today-done-panel">
                       <div className="section-head">
                         <h2>今天完成的事</h2>
+                        <Button variant="outline" size="sm" onClick={() => go('summary')}>生成分享图</Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -898,9 +902,6 @@ export default function Home() {
                           收起
                         </Button>
                       </div>
-                      <p className="settings-copy">
-                        汇总日常任务、学生指导和已完成组会，按各自的实际日期统计。
-                      </p>
                       {todayCompletedWork.length ? (
                         todayCompletedWork.map(completedWorkRow)
                       ) : (
@@ -1015,7 +1016,7 @@ export default function Home() {
                     </section>
                     <section className="panel">
                       <div className="section-head"><h2>指导与组会 <small>未来 7 天及待跟进</small></h2><Button size="sm" variant="outline" onClick={()=>setQuickStudent('')}>一键跟进</Button></div>
-                      {follow.map(s=><div key={s.id} className="flex-between" style={{gap:12}}><button className="reminder" style={{flex:1,minWidth:0}} onClick={()=>go('students',s.id)}><span>{s.title}<small> · {s.kind}</small></span><Due date={s.followup}/></button><Button size="sm" variant="outline" onClick={()=>setQuickStudent(s.id)}>跟进</Button></div>)}
+                      {follow.map(s=><div key={s.id} className="flex-between" style={{gap:12}}><button className="reminder" style={{flex:1,minWidth:0}} onClick={()=>go('students',s.id)}><span>{s.title}<small> · {s.kind}</small></span><Due date={pendingFollowup(s, calendarDay)} emptyLabel="暂未安排"/></button><Button size="sm" variant="outline" onClick={()=>setQuickStudent(s.id)}>跟进</Button></div>)}
                       {data.meetings
                         .filter(
                           (m) =>
@@ -1051,9 +1052,11 @@ export default function Home() {
                   </div>
                 </>
               )}
+              {page === 'summary' && <WorkSummary data={data} mutate={mutate} />}
               {page === 'affairs' && (
                 <Affairs
-                  tasks={data.tasks}
+                  data={data}
+                  mutate={mutate}
                   folders={data.affairsFolders || {}}
                   renderFiles={(kind) => (
                     <Files
@@ -1076,14 +1079,17 @@ export default function Home() {
                       notify={setStatus}
                     />
                   )}
-                  create={(affairsType) =>
+                  create={(affairsType, context) =>
                     create('tasks', {
                       affairsType,
+                      taskCategory: '事务管理',
+                      workType: affairsType,
                       reviewJournal: '',
                       manuscriptTitle: '',
                       reviewNumber: '',
                       requester: '',
                       assistanceType: '论文',
+                      ...context,
                     })
                   }
                   edit={(item) =>
@@ -1097,11 +1103,14 @@ export default function Home() {
               )}
               {page === 'tasks' && (
                 <>
-                  <div className="page-title">
+                  <section className="cover vangogh" aria-label="日常任务插图：梵高《诗人花园》">
                     <div>
-                      <p className="eyebrow">DAILY TASKS</p>
+                      <p>DAILY TASKS</p>
                       <h1>日常任务</h1>
                     </div>
+                  </section>
+                  <div className="page-title">
+                    <h2>任务安排</h2>
                     <Button
                       onClick={() =>
                         create('tasks', { isTemporary: taskOrigin === '临时' })
@@ -1196,13 +1205,6 @@ export default function Home() {
                       </p>
                       <h1>{labels[page]}</h1>
                     </div>
-                    <span className="art-credit">
-                      {page === 'projects'
-                        ? '克劳德·莫奈 · 睡莲'
-                        : page === 'students'
-                          ? '文森特·梵高 · 诗人花园'
-                          : '讨论 · 记录 · 行动'}
-                    </span>
                   </section>
                   <div className="page-title">
                     <div className="filter-bar">
@@ -1236,13 +1238,6 @@ export default function Home() {
                           : '安排组会'}
                     </Button>
                   </div>
-                  {page === 'meetings' && (
-                    <div className="frequency-note">
-                      <Clock3 size={17} />
-                      全日制组会每两周 · MPA
-                      组会每两个月。记录完成后可生成下次安排，日期可调整。
-                    </div>
-                  )}
                   {(() => {
                     const list = data[page as Collection].filter(
                       (x) =>
@@ -1343,7 +1338,7 @@ export default function Home() {
                                   <Due date={s.graduation} />
                                 </TableCell>
                                 <TableCell>
-                                  <Due date={s.followup} />
+                                  <Due date={pendingFollowup(s, calendarDay)} emptyLabel="暂未安排" />
                                 </TableCell>
                                 <TableCell>
                                   <Button
@@ -1540,12 +1535,21 @@ export default function Home() {
                         </div>
                         <div>
                           <small>下次跟进</small>
-                          <Due date={item.followup} />
+                          <Due date={pendingFollowup(item, calendarDay)} emptyLabel="暂未安排" />
+                        </div>
+                        <div>
+                          <small>最近一次跟进</small>
+                          <strong>{latestGuidance(item, calendarDay)?.date || '暂无记录'}</strong>
                         </div>
                       </div>
                       <Guidance
                         student={item}
-                        save={(fields) => patch('students', item.id, fields)}
+                        save={(note, snapshot) => mutate(current => {
+                          const student = current.students.find(s => s.id === item.id);
+                          if (!student) throw new Error('学生档案已不存在');
+                          Object.assign(student, guidanceUpdate(student, note, snapshot));
+                          return current;
+                        })}
                         addTask={() => create('tasks', { studentId: item.id })}
                       />
                       {data.projects.some((p) =>
@@ -1650,6 +1654,7 @@ export default function Home() {
                   select={(id) => setSelected(id)}
                   openProject={(id) => go('projects', id)}
                   save={(person) => put('collaborators', person)}
+                  remove={async id => { await mutate(s => removeCollaborator(s, id)); notify('合作者档案已删除，关联项目和任务已保留'); }}
                 />
               )}
               {page === 'settings' && (
@@ -1753,7 +1758,7 @@ export default function Home() {
                     </p>
                   </section>
                   <section className="panel">
-                    <h2>画作与来源</h2>
+                    <h2>页面插图</h2>
                     <div className="art-grid">
                       {[
                         [
@@ -1779,7 +1784,7 @@ export default function Home() {
                           key={img}
                         >
                           <img src={'/art/' + img} alt={title} />
-                          <small>{title} ↗</small>
+
                         </a>
                       ))}
                     </div>
@@ -1943,7 +1948,10 @@ function RecordForm({
   remove: (item: Item) => Promise<void>;
   save: (i: Item) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState<Item>(structuredClone(modal.item)),
+  const [draft, setDraft] = useState<Item>(() => {
+    const item = structuredClone(modal.item);
+    return modal.collection === 'tasks' ? { ...item, ...classificationOf(item) } : item;
+  }),
     [busy, setBusy] = useState(false),
     [err, setErr] = useState('');
   const c = modal.collection;
@@ -1988,7 +1996,7 @@ function RecordForm({
             setBusy(true);
             try {
               if(c==='tasks') validateTaskReminder(draft);
-              await save({ ...draft, title: draft.title.trim() });
+              await save({ ...(c === 'tasks' ? applyClassification(draft, draft.taskCategory, draft.workType) : draft), title: draft.title.trim() });
             } catch (e: any) {
               setErr(e.message);
             } finally {
@@ -2007,19 +2015,22 @@ function RecordForm({
           </Field>
           {c === 'tasks' && (
             <>
-              <Field label="任务类别">
-                <Pick
-                  value={draft.affairsType || ''}
-                  onChange={(v) => set('affairsType', v)}
-                  options={[{ value: '', label: '普通任务' }, ...affairTypes]}
-                />
-              </Field>
+              <div className="form-grid">
+                <WorkClassificationFields value={{ taskCategory: draft.taskCategory, workType: draft.workType }}
+                  onChange={value => setDraft(d => ({ ...d, ...value, affairProjectId: value.taskCategory === '事务管理' && value.workType === '行政任务' ? d.affairProjectId || '' : '' }))} disabled={busy} />
+              </div>
               <div className="form-grid">
                 <Field label="负责人"><Input list="task-people" placeholder="填写姓名或选择已有合作者" value={draft.ownerName||''} onChange={e=>set('ownerName',e.target.value)}/></Field>
-                <Field label={draft.affairsType==='协助评阅'?'任务发起方 / 求助人':draft.affairsType==='期刊审稿'?'任务发起方 / 联系编辑':'任务发起方 / 交办人或部门'}><Input list="task-people" placeholder="填写姓名、部门或选择已有合作者" value={draft.requester||''} onChange={e=>set('requester',e.target.value)}/></Field>
+                <Field label={draft.workType==='协助评阅'?'任务发起方 / 求助人':draft.workType==='期刊审稿'?'任务发起方 / 联系编辑':'任务发起方 / 交办人或部门'}><Input list="task-people" placeholder="填写姓名、部门或选择已有合作者" value={draft.requester||''} onChange={e=>{const requester=e.target.value;setDraft(d=>({...d,requester,affairProjectId:(data.affairProjects||[]).find(p=>p.id===d.affairProjectId)?.requester.trim()===requester.trim()?d.affairProjectId||'':''}));}}/></Field>
                 <datalist id="task-people">{data.collaborators.map(p=><option key={p.id} value={p.title}>{p.institution||''}</option>)}</datalist>
               </div>
-              {draft.affairsType === '期刊审稿' && (
+              {draft.taskCategory === '事务管理' && draft.workType === '行政任务' && <Field label="事务项目">
+                <Pick value={draft.affairProjectId || ''} onChange={id => { const project=data.affairProjects?.find(p=>p.id===id); setDraft(d=>({...d,affairProjectId:id,...(project?{requester:project.requester}:{})})); }} options={[
+                  {value:'',label:'待归类（暂不关联事务项目）'},
+                  ...(data.affairProjects||[]).filter(p=>!draft.requester?.trim() || p.requester.trim()===draft.requester.trim()).map(p=>({value:p.id,label:draft.requester?.trim()?p.title:`${p.requester} · ${p.title}`}))
+                ]}/><small>在事务管理中建立和维护事务项目。</small>
+              </Field>}
+              {draft.workType === '期刊审稿' && (
                 <>
                   <Field label="期刊名称">
                     <Input
@@ -2038,7 +2049,7 @@ function RecordForm({
                   {field('reviewNumber', '稿件编号（选填）')}
                 </>
               )}
-              {draft.affairsType === '协助评阅' && (
+              {draft.workType === '协助评阅' && (
                 <>
                   <Field label="评阅内容">
                     <Pick
@@ -2065,7 +2076,7 @@ function RecordForm({
                 {draft.reminderEnabled && <Field label="提醒日期"><Input type="date" required value={draft.reminderDate||''} onChange={e=>set('reminderDate',e.target.value)}/><small>从这一天起显示在首页，直到完成、关闭提醒或安排为今天做。</small></Field>}
               </div>}
               <div className="form-grid">
-                <Field label="关联项目">
+                {!(draft.taskCategory === '事务管理' && draft.workType === '行政任务') && <Field label="关联项目">
                   <Pick
                     value={draft.projectId}
                     onChange={(v) => set('projectId', v)}
@@ -2077,7 +2088,7 @@ function RecordForm({
                       })),
                     ]}
                   />
-                </Field>
+                </Field>}
                 <Field label="关联学生">
                   <Pick
                     value={draft.studentId}
@@ -2092,7 +2103,6 @@ function RecordForm({
                   />
                 </Field>
               </div>
-              <details open={draft.meetingId ? true : undefined}><summary>其他关联{draft.meetingId ? "（已关联组会）" : "（选填）"}</summary>
               <Field label="关联组会">
                 <Pick
                   value={draft.meetingId}
@@ -2101,11 +2111,16 @@ function RecordForm({
                     { value: '', label: '不关联' },
                     ...data.meetings.map((x) => ({
                       value: x.id,
-                      label: x.title,
+                      label: x.date ? `${x.date} · ${x.title}` : x.title,
                     })),
                   ]}
                 />
-              </Field></details>
+                <small>
+                  {data.meetings.length
+                    ? '关联后，任务也会显示在该组会的“关联任务”中。'
+                    : '暂无组会，请先到“组会记录”新建组会，再回来关联。'}
+                </small>
+              </Field>
               <label className="check-label">
                 <Checkbox
                   checked={!!draft.isTemporary}
@@ -2363,6 +2378,7 @@ function RecordForm({
               </div>
             </>
           )}
+          {(c === 'tasks' || c === 'meetings') && <DurationField value={draft.actualMinutes} onChange={v => set('actualMinutes', v)} />}
           {c === 'students' && (
             <>
               <Field label="培养类型">
@@ -2373,10 +2389,7 @@ function RecordForm({
                 />
               </Field>
               {field('topic', '研究题目 / 研究方向')}
-              <div className="form-grid">
-                {field('graduation', '毕业节点', 'date')}
-                {field('followup', '下次跟进', 'date')}
-              </div>
+              {field('graduation', '毕业节点', 'date')}
               {field('feedback', '当前学生反馈')}
             </>
           )}
@@ -2462,13 +2475,15 @@ function Guidance({
   addTask,
 }: {
   student: Item;
-  save: (x: any) => Promise<void>;
+  save: (note: Item, snapshot: string) => Promise<void>;
   addTask: () => void;
 }) {
   const [draft, setDraft] = useState<any>(null),
     [err, setErr] = useState(''),
     [busy, setBusy] = useState(false);
   const records = student.guidance || [];
+  const snapshot = useRef(guidanceSnapshot(student));
+  function openDraft(note: Item) { snapshot.current = guidanceSnapshot(student); setErr(''); setDraft(note); }
   return (
     <section className="panel">
       <div className="section-head">
@@ -2477,12 +2492,13 @@ function Guidance({
           variant="outline"
           size="sm"
           onClick={() =>
-            setDraft({
+            openDraft({
               id: uid(),
+              title: '',
               date: today(),
               content: '',
               feedback: '',
-              followup: student.followup || '',
+              followup: defaultNextFollowup(student),
             })
           }
         >
@@ -2504,7 +2520,7 @@ function Guidance({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setDraft({ ...r })}
+                    onClick={() => openDraft({ ...r, followup: r.followup > r.date ? r.followup : '' })}
                   >
                     <Pencil size={14} />
                     编辑
@@ -2514,7 +2530,7 @@ function Guidance({
                 {r.feedback && (
                   <p className="feedback-summary">学生反馈 · {r.feedback}</p>
                 )}
-                {r.followup && <small>约定跟进：{r.followup}</small>}
+                {r.followup > r.date && <small>当时约定下次跟进：{r.followup}</small>}
               </article>
             ))}
         </div>
@@ -2537,22 +2553,17 @@ function Guidance({
         <DialogContent className="record-dialog">
           <DialogTitle>指导记录 · {student.title}</DialogTitle>
           <DialogDescription>
-            保存后同步更新学生的跟进日期与当前反馈。
+            完成本次指导后解除旧提醒；下次跟进日期可留空。编辑或补录较早的记录不会改动当前安排。
           </DialogDescription>
           {draft && (
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (busy) return;
                 setBusy(true);
                 setErr('');
                 try {
-                  await save({
-                    guidance: records.some((r: any) => r.id === draft.id)
-                      ? records.map((r: any) => (r.id === draft.id ? draft : r))
-                      : [...records, draft],
-                    followup: draft.followup,
-                    feedback: draft.feedback,
-                  });
+                  await save(draft, snapshot.current);
                   setDraft(null);
                 } catch (e: any) {
                   setErr(e.message);
@@ -2566,22 +2577,28 @@ function Guidance({
                   <Input
                     type="date"
                     required
+                    max={today()}
                     value={draft.date}
                     onChange={(e) =>
                       setDraft({ ...draft, date: e.target.value })
                     }
                   />
                 </Field>
-                <Field label="下次跟进">
+                <Field label="下次跟进日期（选填）">
                   <Input
                     type="date"
+                    min={draft.date}
                     value={draft.followup}
                     onChange={(e) =>
                       setDraft({ ...draft, followup: e.target.value })
                     }
                   />
+                  <small>留空表示本次已完成，暂不安排下次跟进。</small>
                 </Field>
               </div>
+              <div className="form-grid"><WorkClassificationFields value={{ taskCategory: '学生指导', workType: draft.workType || '' }} fixedCategory="学生指导"
+                onChange={value => setDraft({ ...draft, workType: value.workType })} disabled={busy} /></div>
+              <DurationField value={draft.actualMinutes} onChange={v => setDraft({ ...draft, actualMinutes: v })} />
               <Editor
                 value={draft.content}
                 onChange={(v) => setDraft({ ...draft, content: v })}
@@ -2597,7 +2614,7 @@ function Guidance({
               {err && <p className="error-text">{err}</p>}
               <div className="form-footer">
                 <Button type="submit" disabled={busy}>
-                  {busy ? '保存中…' : '保存指导记录'}
+                  {busy ? '保存中…' : records.some((r: Item) => r.id === draft.id) ? '保存修改' : '完成本次指导'}
                 </Button>
               </div>
             </form>

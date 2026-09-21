@@ -31,7 +31,10 @@ try {
 BASE = Path(__file__).resolve().parent.parent
 DATA = Path(os.environ.get('RESEARCH_DESK_DATA', BASE / 'data'))
 LOCK = threading.RLock()
-AFFAIR_TYPES = ('行政任务','期刊审稿','学生工作','协助评阅')
+WORK_TYPES = json.loads((BASE / 'lib' / 'work-types.json').read_text())
+ALL_WORK_TYPES = tuple(t for types in WORK_TYPES.values() for t in types)
+LEGACY_WORK_TYPES = ('科研项目','学生指导','学术事务','日常任务')
+AFFAIR_TYPES = (*WORK_TYPES['事务管理'], '学生工作')
 COLLECTIONS = ('tasks', 'projects', 'students', 'meetings', 'collaborators')
 
 def empty():
@@ -57,21 +60,40 @@ def migrate(data):
         # Dates are deliberately left unset: historical progress is not a schedule.
     return result
 
+def validate_minutes(record):
+    value = record.get('actualMinutes')
+    if value is not None and (type(value) is not int or not 0 <= value <= 10000000):
+        raise ValueError('耗时请填写非负整数分钟')
+
 def validate(data):
     if not isinstance(data, dict) or data.get('version') != 2: raise ValueError('工作台版本已更新，请刷新页面后重试')
     if not isinstance(data.get('revision'), int) or data['revision'] < 0: raise ValueError('记录版本无效')
     folders = data.get('affairsFolders', {})
     if not isinstance(folders, dict) or any(k not in AFFAIR_TYPES or not isinstance(v, str) for k,v in folders.items()): raise ValueError('事务文件夹格式不正确')
-    ids = set()
+    affair_projects = data.get('affairProjects', [])
+    if not isinstance(affair_projects, list) or len(affair_projects) > 50000: raise ValueError('事务项目格式不正确')
+    affair_ids = set()
+    affair_names = set()
+    for project in affair_projects:
+        if not isinstance(project, dict) or not all(isinstance(project.get(k), str) and project[k].strip() for k in ('id','title','requester')): raise ValueError('事务项目需填写标识、名称和发起方')
+        name = (project['requester'].strip(), project['title'].strip())
+        if project['id'] in affair_ids or name in affair_names: raise ValueError('事务项目标识或名称重复')
+        if 'notes' in project and not isinstance(project['notes'], str): raise ValueError('事务项目说明格式错误')
+        affair_ids.add(project['id']); affair_names.add(name)
+    ids = set(affair_ids)
     for key in COLLECTIONS:
         if not isinstance(data.get(key), list) or len(data[key]) > 50000: raise ValueError('记录格式不正确')
         for record in data[key]:
             if not isinstance(record, dict) or not isinstance(record.get('id'), str) or record['id'] in ids: raise ValueError('记录标识重复或缺失')
             ids.add(record['id'])
+            validate_minutes(record)
+            if record.get('workType') not in (None, '', *ALL_WORK_TYPES, *LEGACY_WORK_TYPES): raise ValueError('工作类型无效')
+            if record.get('taskCategory') not in (None, '', *WORK_TYPES): raise ValueError('任务类别无效')
+            if key == 'tasks' and record.get('taskCategory') and record.get('workType') not in WORK_TYPES[record['taskCategory']]: raise ValueError('工作类型与任务类别不匹配')
             if not isinstance(record.get('title'), str) or not record['title'].strip(): raise ValueError('名称不能为空')
             for k, value in record.items():
-                if k in ('id','title','kind','date','deadline','next','folder','notes','topic','graduation','followup','feedback','agenda','attendees','group','projectId','studentId','meetingId','bucket','collaborators','institution','position','research','contact','targetJournal','affairsType','reviewJournal','manuscriptTitle','reviewNumber','requester','assistanceType','completedOn') and not isinstance(value,str): raise ValueError('字段类型错误：'+k)
-            for boolean in ('archived','done','completed','pinned','isTemporary'):
+                if k in ('id','title','kind','date','deadline','next','folder','notes','topic','graduation','followup','feedback','agenda','attendees','group','affairProjectId','projectId','studentId','meetingId','bucket','collaborators','institution','position','research','contact','targetJournal','affairsType','reviewJournal','manuscriptTitle','reviewNumber','requester','assistanceType','completedOn') and not isinstance(value,str): raise ValueError('字段类型错误：'+k)
+            for boolean in ('archived','done','completed','pinned','isTemporary','followupPending'):
                 if boolean in record and not isinstance(record[boolean],bool): raise ValueError('完成状态格式错误')
             for date_field in ('date','deadline','graduation','followup','completedOn'):
                 if record.get(date_field):
@@ -114,15 +136,25 @@ def validate(data):
                 if not isinstance(record.get('guidance',[]),list): raise ValueError('指导记录格式错误')
                 for note in record.get('guidance',[]):
                     if not isinstance(note,dict) or not all(isinstance(note.get(k),str) for k in ('id','date','content','feedback','followup')): raise ValueError('指导记录字段缺失')
+                    validate_minutes(note)
+                    if note.get('workType') not in (None, '', *WORK_TYPES['学生指导']): raise ValueError('指导记录工作类型无效')
     collaborator_ids={x['id'] for x in data['collaborators']}
     for project in data['projects']:
         links=project.get('collaboratorIds',[])
         if not isinstance(links,list) or not all(isinstance(x,str) and x in collaborator_ids for x in links) or len(links)!=len(set(links)): raise ValueError('合作者关联无效')
     for record in data['tasks']:
         kind=record.get('affairsType','')
-        if kind not in ('','行政任务','期刊审稿','学生工作','协助评阅'): raise ValueError('事务类别无效')
+        if kind not in ('', *AFFAIR_TYPES): raise ValueError('事务类别无效')
+        if record.get('taskCategory'):
+            expected = record['workType'] if record['taskCategory'] == '事务管理' else ''
+            if kind != expected: raise ValueError('事务分类与任务类别不一致')
         if kind=='期刊审稿' and (not record.get('reviewJournal','').strip() or not record.get('manuscriptTitle','').strip()): raise ValueError('期刊审稿需填写期刊名称和稿件名称')
         if kind=='协助评阅' and record.get('assistanceType','论文') not in ('论文','项目','其他'): raise ValueError('评阅内容类别无效')
+        if record.get('affairProjectId'):
+            project = next((p for p in affair_projects if p['id'] == record['affairProjectId']), None)
+            if not project: raise ValueError('关联的事务项目不存在')
+            if kind != '行政任务' or record.get('taskCategory') not in (None, '', '事务管理') or record.get('workType') not in (None, '', '行政任务', '学术事务', '日常任务'): raise ValueError('事务项目只能关联行政任务')
+            if record.get('requester','').strip() != project['requester'].strip(): raise ValueError('事务项目与任务发起方不一致')
         if record.get('bucket') not in ('今天','近期','以后'): raise ValueError('任务分组不正确')
         if not isinstance(record.get('done'),bool): raise ValueError('任务完成状态不正确')
         for field, collection in [('projectId','projects'),('studentId','students'),('meetingId','meetings')]:
@@ -174,7 +206,7 @@ def demo_action(body):
         if body.get('action') == 'clear':
             return write_state(without_demo(current))
         if body.get('action') == 'load':
-            if any(current[k] for k in COLLECTIONS) or current.get('affairsFolders'): raise ValueError('仅空白工作台可以载入示例，现有记录不会覆盖')
+            if any(current[k] for k in COLLECTIONS) or current.get('affairsFolders') or current.get('affairProjects'): raise ValueError('仅空白工作台可以载入示例，现有记录不会覆盖')
             example=make_demo(DATA/'demo-files');example['revision']=current['revision']
             return write_state(example)
         raise ValueError('无效的示例操作')

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { orderCollaborators, activeProjects } from '@/lib/collaborator-order';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,12 +19,14 @@ export function Collaborators({
   select,
   openProject,
   save,
+  remove,
 }: {
   data: State;
   selected: string;
   select: (id: string) => void;
   openProject: (id: string) => void;
   save: (item: Item) => Promise<void>;
+  remove: (id: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Item | null>(null),
     [busy, setBusy] = useState(false),
@@ -34,6 +36,17 @@ export function Collaborators({
   useEffect(()=>{try{const value=JSON.parse(localStorage.getItem('desk-collaborator-sorts')||'{}');setSortModes({active:value.active==='title'?'title':'project',potential:value.potential==='title'?'title':'project'});}catch{}},[]);
   function changeSort(group:string,value:string){const next={...sortModes,[group]:value};setSortModes(next);try{localStorage.setItem('desk-collaborator-sorts',JSON.stringify(next));}catch{}}
 
+  const operation = useRef(false);
+  async function deletePerson(id: string) {
+    if (operation.current) return;
+    const target = data.collaborators.find(p => p.id === id);
+    if (!target) return;
+    if (!window.confirm(`删除合作者“${target.title}”？\n档案及其中的联系方式、备注将被删除，并解除项目和任务关联。相关项目、任务及其中记录的姓名仍保留。`)) return;
+    operation.current = true; setBusy(true); setErr('');
+    try { await remove(id); setDraft(null); select(''); }
+    catch (e) { setErr(e instanceof Error ? e.message : '删除失败，请重试'); }
+    finally { operation.current = false; setBusy(false); }
+  }
   const person = data.collaborators.find((x) => x.id === selected);
   const projects = (id: string) =>
     data.projects.filter((p) => p.collaboratorIds?.includes(id));
@@ -56,6 +69,7 @@ export function Collaborators({
   };
   return (
     <>
+      {!draft && err && <p className="error-text" role="alert">{err}</p>}
       {person ? (
         <>
           <Button
@@ -74,10 +88,10 @@ export function Collaborators({
               </p>
               <h1>{person.title}</h1>
             </div>
-            <Button variant="outline" onClick={() => start(person)}>
-              <Pencil size={15} />
-              编辑档案
-            </Button>
+            <div className="button-row">
+              <Button variant="outline" disabled={busy} onClick={() => start(person)}><Pencil size={15} />编辑档案</Button>
+              <Button variant="destructive" disabled={busy} onClick={() => void deletePerson(person.id)}>{busy ? '处理中…' : '删除合作者'}</Button>
+            </div>
           </div>
           <div className="metadata-grid">
             <div>
@@ -170,7 +184,6 @@ export function Collaborators({
               <div className="section-head"><h2>{label} <small>{people.length} 人</small></h2>
                 <label className="collaborator-sort">排序<select aria-label={label+'排序'} value={sortModes[group]} onChange={e=>changeSort(group,e.target.value)}><option value="project">按项目优先情况</option><option value="title">按职称</option></select></label>
               </div>
-              <p className="settings-copy">{sortModes[group]==='title'?'正高级 → 副高级 → 中级 → 初级 → 其他或待补充；同级按姓名排序。':'置顶的进行中项目优先，其次其他进行中项目，再按截止日期由近到远；无进行中项目排在最后。'}</p>
               <div className="collaborator-grid">{people.map(p=><button className="collaborator-card" key={p.id} onClick={()=>select(p.id)}>
                 <div className="flex-between"><span className="person-avatar">{p.title.slice(0,1)}</span><ArrowUpRight size={18}/></div>
                 <h2>{p.title}</h2><p>{p.position||'职称待补充'}</p>
@@ -197,10 +210,12 @@ export function Collaborators({
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (operation.current) return;
                 if (!draft.title.trim()) {
                   setErr('请填写姓名');
                   return;
                 }
+                operation.current = true;
                 setBusy(true);
                 setErr('');
                 try {
@@ -209,6 +224,7 @@ export function Collaborators({
                 } catch (e) {
                   setErr(e instanceof Error ? e.message : '保存失败');
                 } finally {
+                  operation.current = false;
                   setBusy(false);
                 }
               }}
@@ -255,6 +271,7 @@ export function Collaborators({
                 </p>
               )}
               <div className="form-footer">
+                {data.collaborators.some(p => p.id === draft.id) && <Button type="button" variant="destructive" disabled={busy} style={{marginRight:'auto'}} onClick={() => void deletePerson(draft.id)}>删除合作者</Button>}
                 <Button
                   type="button"
                   variant="outline"
